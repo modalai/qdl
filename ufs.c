@@ -282,20 +282,20 @@ int ufs_provisioning_execute(struct qdl_device *qdl,
 	}
 
 	// Just ask a target to check the XML w/o real provisioning
-	ret = apply_ufs_common(qdl, ufs_common_p);
-	if (ret)
-		return ret;
-	for (body = ufs_body_p; body; body = body->next) {
-		ret = apply_ufs_body(qdl, body);
-		if (ret)
-			return ret;
-	}
-	ret = apply_ufs_epilogue(qdl, ufs_epilogue_p, false);
-	if (ret) {
-		fprintf(stderr,
-			"UFS provisioning impossible, provisioning XML may be corrupted\n");
-		return ret;
-	}
+	// ret = apply_ufs_common(qdl, ufs_common_p);
+	// if (ret)
+	// 	return ret;
+	// for (body = ufs_body_p; body; body = body->next) {
+	// 	ret = apply_ufs_body(qdl, body);
+	// 	if (ret)
+	// 		return ret;
+	// }
+	// ret = apply_ufs_epilogue(qdl, ufs_epilogue_p, false);
+	// if (ret) {
+	// 	fprintf(stderr,
+	// 		"UFS provisioning impossible, provisioning XML may be corrupted\n");
+	// 	return ret;
+	// }
 
 	// Real provisioning -- target didn't refuse a given XML
 	ret = apply_ufs_common(qdl, ufs_common_p);
