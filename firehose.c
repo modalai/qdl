@@ -52,6 +52,7 @@
 #include <libxml/tree.h>
 #include "qdl.h"
 #include "ufs.h"
+#include "modal_tmp.h"
 
 static void xml_setpropf(xmlNode *node, const char *attr, const char *fmt, ...)
 {
@@ -249,9 +250,11 @@ static int firehose_send_configure(struct qdl_device *qdl, size_t payload_size, 
 	node = xmlNewChild(root, NULL, (xmlChar*)"configure", NULL);
 	xml_setpropf(node, "MemoryName", storage);
 	xml_setpropf(node, "MaxPayloadSizeToTargetInBytes", "%d", payload_size);
-	xml_setpropf(node, "verbose", "%d", 0);
-	xml_setpropf(node, "ZLPAwareHost", "%d", 1);
+	xml_setpropf(node, "Verbose", "%d", 1);
+	xml_setpropf(node, "ZlpAwareHost", "%d", 1);
 	xml_setpropf(node, "SkipStorageInit", "%d", skip_storage_init);
+	xml_setpropf(node, "AlwaysValidate", "%d", 0);
+	xml_setpropf(node, "MaxDigestTableSizeInBytes", "%d", 8192);
 
 	ret = firehose_write(qdl, doc);
 	xmlFreeDoc(doc);
@@ -501,11 +504,18 @@ int firehose_apply_ufs_common(struct qdl_device *qdl, struct ufs_common *ufs)
 	xml_setpropf(node_to_send, "bBootEnable", "%d", ufs->bBootEnable);
 	xml_setpropf(node_to_send, "bDescrAccessEn", "%d", ufs->bDescrAccessEn);
 	xml_setpropf(node_to_send, "bInitPowerMode", "%d", ufs->bInitPowerMode);
-	xml_setpropf(node_to_send, "bHighPriorityLUN", "%d", ufs->bHighPriorityLUN);
+	xml_setpropf(node_to_send, "bHighPriorityLUN", "0x%x", ufs->bHighPriorityLUN);
 	xml_setpropf(node_to_send, "bSecureRemovalType", "%d", ufs->bSecureRemovalType);
 	xml_setpropf(node_to_send, "bInitActiveICCLevel", "%d", ufs->bInitActiveICCLevel);
 	xml_setpropf(node_to_send, "wPeriodicRTCUpdate", "%d", ufs->wPeriodicRTCUpdate);
 	xml_setpropf(node_to_send, "bConfigDescrLock", "%d", 0/*ufs->bConfigDescrLock*/); //Safety, remove before fly
+
+	// begin modalai hack
+	xml_setpropf(node_to_send, "bWriteBoosterBufferPreserveUserSpaceEn", "%d", 1);
+	xml_setpropf(node_to_send, "bWriteBoosterBufferType", "%d", 1);
+	xml_setpropf(node_to_send, "shared_wb_buffer_size_in_kb", "%d", 4194304);
+	// end modalai hack
+
 
 	ret = firehose_send_single_tag(qdl, node_to_send);
 	if (ret)
@@ -528,9 +538,17 @@ int firehose_apply_ufs_body(struct qdl_device *qdl, struct ufs_body *ufs)
 	xml_setpropf(node_to_send, "bDataReliability", "%d", ufs->bDataReliability);
 	xml_setpropf(node_to_send, "bLUWriteProtect", "%d", ufs->bLUWriteProtect);
 	xml_setpropf(node_to_send, "bMemoryType", "%d", ufs->bMemoryType);
-	xml_setpropf(node_to_send, "bLogicalBlockSize", "%d", ufs->bLogicalBlockSize);
+
+	// modalai change: switch bLogicalBlockSize format from %d to %02x
+	xml_setpropf(node_to_send, "bLogicalBlockSize", "0x%02x", ufs->bLogicalBlockSize);
+
 	xml_setpropf(node_to_send, "bProvisioningType", "%d", ufs->bProvisioningType);
 	xml_setpropf(node_to_send, "wContextCapabilities", "%d", ufs->wContextCapabilities);
+
+	// begin modalai hack
+	xml_setpropf(node_to_send, "wb_buffer_size_in_kb", "%d", 0);
+	// end modalai hack
+
 	if(ufs->desc)
 		xml_setpropf(node_to_send, "desc", "%s", ufs->desc);
 
@@ -619,47 +637,96 @@ int firehose_run(struct qdl_device *qdl, const char *incdir, const char *storage
 	int bootable;
 	int ret;
 
+	modal_log("Executing firehose_read");
 	firehose_read(qdl, 5000, firehose_generic_parser, NULL);
+	modal_log("Completed firehose_read");
 
+
+	modal_log("Executing ufs_need_provisioning");
 	if(ufs_need_provisioning()) {
+		modal_log("Turns out ufs needs provisioning");
+
+		modal_log("<ufs_prov> executing firehose_configure");
 		ret = firehose_configure(qdl, true, storage);
 		if (ret)
 			return ret;
+		modal_log("<ufs_prov> finished firehose_configure");
+
+		modal_log("<ufs_prov> executing ufs_provisioning_execute");
 		ret = ufs_provisioning_execute(qdl, firehose_apply_ufs_common,
 			firehose_apply_ufs_body, firehose_apply_ufs_epilogue);
 		if (!ret)
 			printf("UFS provisioning succeeded\n");
 		else
 			printf("UFS provisioning failed\n");
+		modal_log("<ufs_prov> finished ufs_provisioning_execute");
 
+		modal_log("executing firehose_reset");
 		firehose_reset(qdl);
+		modal_log("finished firehose_reset");
 
 		return ret;
 	}
+	
 
+	printf("\n\n");
+	modal_log("==== Executing firehose configure ====");
 	ret = firehose_configure(qdl, false, storage);
 	if (ret)
 		return ret;
+	printf("\n\n");
+	modal_log("==== Completed firehose configure ====");
 
+
+	printf("\n\n");
+	modal_log("==== Executing firehose erase ====");
 	ret = erase_execute(qdl, firehose_erase);
 	if (ret)
 		return ret;
+	printf("\n\n");
+	modal_log("==== Completed firehose erase ====");
 
+
+	printf("\n\n");
+	modal_log("==== Executing firehose program ====");
 	ret = program_execute(qdl, firehose_program, incdir);
 	if (ret)
 		return ret;
+	printf("\n\n");
+	modal_log("==== Completed firehose program ====");
 
+
+	printf("\n\n");
+	modal_log("==== Executing patch_execute ====");
 	ret = patch_execute(qdl, firehose_apply_patch);
 	if (ret)
 		return ret;
+	printf("\n\n");
+	modal_log("==== Completed patch_execute ====");
 
+
+	printf("\n\n");
+	modal_log("==== Executing find_bootable_partition ====");
 	bootable = program_find_bootable_partition();
-	if (bootable < 0)
+	if (bootable < 0) {
 		fprintf(stderr, "no boot partition found\n");
-	else
+	}
+	else {
+		printf("\n\n");
+		modal_log("==== Executing firehose set bootable ====");
 		firehose_set_bootable(qdl, bootable);
+		printf("\n\n");
+		modal_log("==== Completed firehose set bootable ====");
+	}
+	printf("\n\n");
+	modal_log("==== Completed find_bootable_partition ====");
 
+
+	printf("\n\n");
+	modal_log("==== Executing firehose_reset ====");
 	firehose_reset(qdl);
+	printf("\n\n");
+	modal_log("==== Completed firehose_reset ====");
 
 	return 0;
 }

@@ -55,6 +55,7 @@
 #include "qdl.h"
 #include "patch.h"
 #include "ufs.h"
+#include "modal_tmp.h"
 
 #define MAX_USBFS_BULK_SIZE	(16*1024)
 
@@ -403,6 +404,8 @@ int main(int argc, char **argv)
 	bool qdl_finalize_provisioning = false;
 
 
+	printf("modal hello\n");
+	modal_log("test log\n");
 	static struct option options[] = {
 		{"debug", no_argument, 0, 'd'},
 		{"include", required_argument, 0, 'i'},
@@ -466,18 +469,24 @@ int main(int argc, char **argv)
 		}
 	} while (++optind < argc);
 
+	modal_log("Executing usb_open");
 	ret = usb_open(&qdl);
 	if (ret)
 		return 1;
+	modal_log("Completed usb_open");
 
+	modal_log("Executing sahara_run");
 	qdl.mappings[0] = prog_mbn;
 	ret = sahara_run(&qdl, qdl.mappings, true);
 	if (ret < 0)
 		return 1;
+	modal_log("Completed sahara_run");
 
+	modal_log("Executing firehose_run");
 	ret = firehose_run(&qdl, incdir, storage);
 	if (ret < 0)
 		return 1;
+	modal_log("Completed firehose_run");
 
 	return 0;
 }
